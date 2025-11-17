@@ -1,8 +1,14 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import datetime
 
-app = FastAPI()
+from database import create_document, get_documents
+from schemas import Event, MemberApplication, ContactMessage
+
+app = FastAPI(title="Club Website API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,13 +18,85 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def read_root():
-    return {"message": "Hello from FastAPI Backend!"}
+    return {"message": "Club API is running"}
+
 
 @app.get("/api/hello")
 def hello():
     return {"message": "Hello from the backend API!"}
+
+
+class ClubInfo(BaseModel):
+    name: str
+    tagline: str
+    description: str
+    socials: dict
+
+
+@app.get("/api/club", response_model=ClubInfo)
+def get_club_info():
+    return ClubInfo(
+        name=os.getenv("CLUB_NAME", "Your Awesome Club"),
+        tagline=os.getenv("CLUB_TAGLINE", "Connect. Create. Grow."),
+        description=os.getenv(
+            "CLUB_DESCRIPTION",
+            "We are a community of passionate people hosting events, workshops and meetups.",
+        ),
+        socials={
+            "instagram": os.getenv("CLUB_INSTAGRAM", "https://instagram.com"),
+            "twitter": os.getenv("CLUB_TWITTER", "https://twitter.com"),
+            "website": os.getenv("CLUB_WEBSITE", ""),
+        },
+    )
+
+
+@app.get("/api/events")
+def list_events(limit: Optional[int] = 20):
+    try:
+        docs = get_documents("event", {}, limit or 20)
+        # Convert datetime to isoformat for JSON
+        for d in docs:
+            if isinstance(d.get("date"), datetime):
+                d["date"] = d["date"].isoformat()
+            # Convert ObjectId to string if present
+            _id = d.get("_id")
+            if _id is not None:
+                d["id"] = str(_id)
+                del d["_id"]
+        return {"items": docs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/events")
+def create_event(event: Event):
+    try:
+        event_id = create_document("event", event)
+        return {"id": event_id, "status": "created"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/join")
+def submit_member_application(application: MemberApplication):
+    try:
+        app_id = create_document("memberapplication", application)
+        return {"id": app_id, "status": "received"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/contact")
+def submit_contact_message(message: ContactMessage):
+    try:
+        msg_id = create_document("contactmessage", message)
+        return {"id": msg_id, "status": "received"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/test")
 def test_database():
